@@ -71,6 +71,10 @@ pub(crate) struct Staging {
     /// only when `!uploaded || dirty`.
     dirty: std::sync::atomic::AtomicBool,
     uploaded: std::sync::atomic::AtomicBool,
+    /// Diagnostics: the submission ([`crate::host::submissions`]) whose
+    /// prelude last recorded an upload from the staging buffer; 0: none.
+    #[cfg(feature = "diagnostics")]
+    sent: std::sync::atomic::AtomicU64,
     /// When a list last recorded a use of it (`crate::host::moment`).
     used: std::sync::atomic::AtomicU64,
     /// How many bytes of the texture's memory were mapped when a list last
@@ -821,6 +825,14 @@ fn claim_upload(
     (!was_uploaded || was_dirty).then_some(!was_uploaded)
 }
 
+/// Diagnostics: whether the upload recorded by submission `sent` may not
+/// have run yet when submission `landed` is the newest finished one (both
+/// numbered as [`crate::host::submissions`]); `sent` 0: none recorded.
+#[cfg(any(test, feature = "diagnostics"))]
+fn in_air(sent: u64, landed: u64) -> bool {
+    sent != 0 && sent > landed
+}
+
 /// A title texture deferred to submission time so `staging.refresh()` runs
 /// before deciding whether `HostList::prelude` must record `CopyTextureRegion`.
 #[derive(Clone)]
@@ -848,7 +860,12 @@ impl PreludeUpload {
             return None;
         };
         #[cfg(feature = "diagnostics")]
-        crate::copystat::add(crate::copystat::C::TexUploads, 1);
+        {
+            crate::copystat::add(crate::copystat::C::TexUploads, 1);
+            // Called inside `Host::submit`, under its lock, after this
+            // submission took its number: `STARTED` is this submission.
+            self.staging.sent.store(crate::host::submissions().0, Relaxed);
+        }
         // A host copy that took the place of one with fewer levels: the slots
         // that show that one are made again once this upload has run.
         if self.staging.first == self.staging.level0 && self.copy.grown.swap(false, Relaxed) {
@@ -1488,6 +1505,20 @@ impl Staging {
     /// Detiles `tiled` (the texture's memory) into the staging buffer.
     fn detile(&self, tiled: &[u8]) {
         self.dirty.store(true, std::sync::atomic::Ordering::Release);
+        // Diagnostics: the staging buffer is written while a submission that
+        // copies from it may not have run yet (nothing waits for it): that
+        // copy can upload these bytes, or a mix. Counted only.
+        // `FINISHED` is the landed number (no store of our own): the
+        // relay lander and the waited-for path set it once the card is done,
+        // so it is never ahead of the card; it lags by the landing's own
+        // work, which can only over-count.
+        #[cfg(feature = "diagnostics")]
+        if in_air(
+            self.sent.load(std::sync::atomic::Ordering::Relaxed),
+            crate::host::submissions().1,
+        ) {
+            crate::copystat::add(crate::copystat::C::TexInAir, 1);
+        }
         // Levels on demand: which levels are the title's is judged here,
         // once, for what the staging buffer holds from now on. The step
         // that gives levels their memory goes by this answer.
@@ -1931,6 +1962,8 @@ fn staging(resource: This, copy: &crate::resource::HostTexture, first: u32) -> O
         last: Mutex::default(),
         dirty: std::sync::atomic::AtomicBool::new(true),
         uploaded: std::sync::atomic::AtomicBool::new(false),
+        #[cfg(feature = "diagnostics")]
+        sent: std::sync::atomic::AtomicU64::new(0),
         used: std::sync::atomic::AtomicU64::new(crate::host::moment()),
         expected: std::sync::atomic::AtomicU64::new(0),
         on_demand,
@@ -2055,7 +2088,7 @@ mod title_memory_tests {
 
 #[cfg(test)]
 mod prelude_upload_tests {
-    use super::claim_upload;
+    use super::{claim_upload, in_air};
     use std::sync::atomic::{AtomicBool, Ordering::Release};
 
     #[test]
@@ -2080,6 +2113,17 @@ mod prelude_upload_tests {
         // must also upload immediately, never alternating upload/skip.
         dirty.store(true, Release);
         assert_eq!(claim_upload(&uploaded, &dirty), Some(false));
+    }
+
+    #[test]
+    fn in_air_until_its_submission_lands() {
+        // Never uploaded by a list.
+        assert!(!in_air(0, 0));
+        assert!(!in_air(0, 5));
+        // Sent by submission 7: in the air until 7 has finished.
+        assert!(in_air(7, 6));
+        assert!(!in_air(7, 7));
+        assert!(!in_air(7, 8));
     }
 
     #[test]
