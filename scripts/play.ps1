@@ -40,8 +40,8 @@ if ($Record) { $settings.VICTORY_PIPELINE_BOOK = '1' }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
 $victory = Join-Path $PSScriptRoot "..\target\$Build\victory.exe"
-if (-not (Test-Path $victory)) { Write-Host "No $victory. Build it first (README.md)."; exit 1 }
-if ($PSCmdlet.ParameterSetName -eq 'Run' -and -not (Test-Path $Exe)) { Write-Host "No $Exe."; exit 1 }
+if (-not (Test-Path -LiteralPath $victory)) { Write-Host "No $victory. Build it first (README.md)."; exit 1 }
+if ($PSCmdlet.ParameterSetName -eq 'Run' -and -not (Test-Path -LiteralPath $Exe)) { Write-Host "No $Exe."; exit 1 }
 # (Other settings left over in this window go; where your files are stays.)
 $paths = 'VICTORY_CONFIG', 'VICTORY_GAME_DIR', 'VICTORY_CACHE_DIR', 'VICTORY_DATA_DIR', 'VICTORY_FIDELITYFX_DIR'
 $inherited = @(Get-ChildItem Env:VICTORY_* | Where-Object { $_.Name -notin $paths })
@@ -53,14 +53,22 @@ $discarded = $inherited | Where-Object {
 if ($discarded) {
     Write-Host "Discarded inherited values for $($discarded.Name -join ', '). Use -More to pass them explicitly."
 }
-if ($Shaders) { $Shaders = @((Resolve-Path -LiteralPath $Shaders -ErrorAction Stop).Path) }
-if ($Exe) { $Exe = (Resolve-Path $Exe).Path }
-Push-Location (Join-Path $PSScriptRoot '..')   # victory.toml is looked for here
+# An archive as written first (shader[1].rpf), else a pattern (stage*.rpf); one that matches nothing stops here.
+if ($Shaders) {
+    $Shaders = @(foreach ($s in $Shaders) {
+        if (Test-Path -LiteralPath $s) { $found = @(Resolve-Path -LiteralPath $s) }
+        else { $found = @(try { Resolve-Path $s -ErrorAction Stop } catch {}) }
+        if (-not $found) { Write-Host "No $s."; exit 1 }
+        $found.Path
+    })
+}
+if ($Exe) { $Exe = (Resolve-Path -LiteralPath $Exe).Path }
+Push-Location -LiteralPath (Join-Path $PSScriptRoot '..')   # victory.toml is looked for here
 try {
     switch ($PSCmdlet.ParameterSetName) {
         'Warm' { & $victory warm --used; $code = $LASTEXITCODE }
         'Shaders' { & $victory shaders @Shaders; $code = $LASTEXITCODE }
         default { & $victory run $Exe --execute; $code = $LASTEXITCODE }
     }
-} finally { Pop-Location }
+} catch { Write-Host "$victory did not run: $_"; $code = 1 } finally { Pop-Location }
 exit $code
