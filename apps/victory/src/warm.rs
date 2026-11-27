@@ -49,6 +49,18 @@ fn select_pipelines(
     all
 }
 
+/// What to say when there is nothing to make: no pipeline written down, or
+/// (`--used`) none an earlier run drew with.
+fn empty_hint(known: usize, early: usize, used: bool) -> Option<&'static str> {
+    if known == 0 {
+        Some("no pipelines recorded: play once with VICTORY_PIPELINE_BOOK=1, e.g. play.ps1 -Record")
+    } else if used && early == 0 {
+        Some("no pipeline an earlier run drew with (early-pipelines.txt): play once, or leave out --used")
+    } else {
+        None
+    }
+}
+
 pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, these: Option<String>) -> Result<()> {
     let dir = folder()?;
     if let Some(these) = these {
@@ -87,6 +99,9 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
         bad.len(),
         all.len()
     );
+    if let Some(hint) = empty_hint(keys.len(), early.len(), used) {
+        println!("{hint}");
+    }
     let state = Mutex::new((Vec::<f64>::new(), 0usize, 0usize));
     let done_out = Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(&done_file)?);
     // (Read back by the runs: these are made beside the others, not before.)
@@ -407,5 +422,14 @@ mod tests {
             select_pipelines(&keys, &done, &HashSet::new(), &early, false, false, None),
             vec![1, 4, 2, 3]
         );
+    }
+
+    #[test]
+    fn empty_hint_only_when_there_is_nothing_to_make() {
+        assert!(empty_hint(0, 0, false).is_some());
+        assert!(empty_hint(0, 5, true).is_some());
+        assert!(empty_hint(3, 0, true).is_some());
+        assert!(empty_hint(3, 0, false).is_none());
+        assert!(empty_hint(3, 2, true).is_none());
     }
 }

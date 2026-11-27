@@ -136,6 +136,12 @@ target\diag\victory.exe shaders <the shader archives>   # every shader translate
 target\diag\victory.exe warm --used                     # pipelines earlier runs drew with, for a new driver or build
 ```
 
+`warm` has nothing to make until one run has written the pipelines down
+(`scripts\play.ps1 -Exe <path> -Record`). Some switches are part of the shader
+cache's key, so both commands should see the ones the runs do: run them as
+`scripts\play.ps1 -Warm` and `scripts\play.ps1 -Shaders <the shader archives>`,
+with the same `-Safe`, `-RayTracing` and `-More` as play.
+
 Commands, debugging switches and upstream's own description:
 [docs/README-fxceless.md](docs/README-fxceless.md). Every `VICTORY_...` switch is
 described in a comment where it is read.
