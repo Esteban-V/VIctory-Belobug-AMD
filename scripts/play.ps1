@@ -53,13 +53,14 @@ $discarded = $inherited | Where-Object {
 if ($discarded) {
     Write-Host "Discarded inherited values for $($discarded.Name -join ', '). Use -More to pass them explicitly."
 }
-if ($Shaders) { $Shaders = @((Resolve-Path $Shaders -ErrorAction Stop).Path) }
+if ($Shaders) { $Shaders = @((Resolve-Path -LiteralPath $Shaders -ErrorAction Stop).Path) }
 if ($Exe) { $Exe = (Resolve-Path $Exe).Path }
 Push-Location (Join-Path $PSScriptRoot '..')   # victory.toml is looked for here
 try {
     switch ($PSCmdlet.ParameterSetName) {
-        'Warm' { & $victory warm --used }
-        'Shaders' { & $victory shaders @Shaders }
-        default { & $victory run $Exe --execute }
+        'Warm' { & $victory warm --used; $code = $LASTEXITCODE }
+        'Shaders' { & $victory shaders @Shaders; $code = $LASTEXITCODE }
+        default { & $victory run $Exe --execute; $code = $LASTEXITCODE }
     }
 } finally { Pop-Location }
+exit $code
